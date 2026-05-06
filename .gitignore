@@ -1,0 +1,63 @@
+# Unity generated folders
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+
+# Unity cache/state
+.utmp/
+[Aa]ssets/AssetStoreTools*
+[Aa]ssets/StreamingAssets/aa.meta
+[Aa]ssets/StreamingAssets/aa/*
+[Aa]ssets/AddressableAssetsData/*/*.bin*
+sysinfo.txt
+
+# IDE and editor generated files
+.vs/
+.vscode/
+.idea/
+.consulo/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.opendb
+*.VC.db
+
+# Build outputs
+*.apk
+*.aab
+*.unitypackage
+*.app
+*.exe
+
+# Debug symbols
+*.pdb
+*.mdb
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+
+# OS files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Local environment files
+.env
+.env.*
+
+# Local/private SDK notes
+board_sdk_knowledge.md
