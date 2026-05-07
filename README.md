@@ -32,10 +32,10 @@ In Unity Hub:
 2. Select the `Chess` folder.
 3. Open it with Unity `6000.4.5f1`.
 4. Let Unity finish importing packages and compiling scripts.
-5. Create or open any scene.
+5. Open `Assets/Scenes/FirstRun.unity`.
 6. Press Play.
 
-No checked-in scene is required. `BoardChessGame` creates the runtime game object automatically after a scene loads.
+`FirstRun.unity` contains a main camera and a `Chess Game Controller` object with `BoardChessGame` attached. `BoardChessGame` also creates the runtime game object automatically if you open another scene without one.
 
 ## Editor Controls
 

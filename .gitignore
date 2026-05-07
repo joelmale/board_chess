@@ -36,11 +36,13 @@ sysinfo.txt
 *.VC.db
 
 # Build outputs
+[Dd]ist/
 *.apk
 *.aab
 *.unitypackage
 *.app
 *.exe
+*.zip
 
 # Debug symbols
 *.pdb
@@ -61,3 +63,7 @@ Desktop.ini
 
 # Local/private SDK notes
 board_sdk_knowledge.md
+
+# Board SDK piece-set models (do not commit unless license allows)
+*.tflite
+*.tflite.meta
