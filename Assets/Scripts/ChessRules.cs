@@ -218,6 +218,130 @@ namespace BattleChess
             return IsKingInCheck(board, color);
         }
 
+        public Vector2Int GetKingSquare(PieceColor color)
+        {
+            return FindKing(board, color);
+        }
+
+        public bool IsSquareThreatened(Vector2Int square, PieceColor attacker)
+        {
+            return IsInside(square) && IsSquareAttacked(board, square, attacker);
+        }
+
+        public List<Vector2Int> GetThreatenedSquares(PieceColor attacker)
+        {
+            List<Vector2Int> squares = new();
+            for (int file = 0; file < 8; file++)
+            {
+                for (int rank = 0; rank < 8; rank++)
+                {
+                    Vector2Int square = new(file, rank);
+                    if (IsSquareAttacked(board, square, attacker))
+                    {
+                        squares.Add(square);
+                    }
+                }
+            }
+
+            return squares;
+        }
+
+        public List<Vector2Int> GetAttackersOfSquare(Vector2Int square, PieceColor attacker)
+        {
+            List<Vector2Int> attackers = new();
+            if (!IsInside(square))
+            {
+                return attackers;
+            }
+
+            for (int file = 0; file < 8; file++)
+            {
+                for (int rank = 0; rank < 8; rank++)
+                {
+                    Vector2Int from = new(file, rank);
+                    ChessPiece piece = board[file, rank];
+                    if (!piece.IsEmpty && piece.Color == attacker && PieceAttacksSquare(board, from, square, piece))
+                    {
+                        attackers.Add(from);
+                    }
+                }
+            }
+
+            return attackers;
+        }
+
+        public List<Vector2Int> GetAtRiskPieces(PieceColor color)
+        {
+            List<Vector2Int> pieces = new();
+            PieceColor attacker = Opponent(color);
+            for (int file = 0; file < 8; file++)
+            {
+                for (int rank = 0; rank < 8; rank++)
+                {
+                    ChessPiece piece = board[file, rank];
+                    Vector2Int square = new(file, rank);
+                    if (!piece.IsEmpty && piece.Color == color && piece.Type != PieceType.King && IsSquareAttacked(board, square, attacker))
+                    {
+                        pieces.Add(square);
+                    }
+                }
+            }
+
+            return pieces;
+        }
+
+        public List<Vector2Int> GetPinnedPieces(PieceColor color)
+        {
+            List<Vector2Int> pieces = new();
+            for (int file = 0; file < 8; file++)
+            {
+                for (int rank = 0; rank < 8; rank++)
+                {
+                    ChessPiece piece = board[file, rank];
+                    if (piece.IsEmpty || piece.Color != color || piece.Type == PieceType.King)
+                    {
+                        continue;
+                    }
+
+                    ChessPiece[,] copy = (ChessPiece[,])board.Clone();
+                    copy[file, rank] = default;
+                    if (IsKingInCheck(copy, color))
+                    {
+                        pieces.Add(new Vector2Int(file, rank));
+                    }
+                }
+            }
+
+            return pieces;
+        }
+
+        public List<Vector2Int> GetHangingHighValuePieces(PieceColor color)
+        {
+            List<Vector2Int> pieces = new();
+            PieceColor attacker = Opponent(color);
+            for (int file = 0; file < 8; file++)
+            {
+                for (int rank = 0; rank < 8; rank++)
+                {
+                    ChessPiece piece = board[file, rank];
+                    Vector2Int square = new(file, rank);
+                    if (piece.IsEmpty || piece.Color != color || piece.Type == PieceType.King || PieceValue(piece.Type) < 3)
+                    {
+                        continue;
+                    }
+
+                    bool attacked = IsSquareAttacked(board, square, attacker);
+                    bool defended = IsSquareAttacked(board, square, color);
+                    if (attacked && !defended)
+                    {
+                        pieces.Add(square);
+                    }
+                }
+            }
+
+            return pieces;
+        }
+
         /// <summary>
         /// Reverses the most recently applied move. Returns false if there is
         /// no move to undo.
@@ -287,7 +411,7 @@ namespace BattleChess
                 history, activeMoveCount, capturedByWhite, capturedByBlack);
         }
 
-        /// <summary>Restores a previously captured snapshot. Clears the undo stack.</summary>
+        /// <summary>Restores a previously captured snapshot and rebuilds undo/redo state from move history.</summary>
         public void RestoreFromSnapshot(GameSnapshot snapshot)
         {
             if (snapshot == null)
@@ -295,24 +419,33 @@ namespace BattleChess
                 return;
             }
 
-            snapshot.CopyBoardInto(board);
-            enPassantTarget = snapshot.HasEnPassantTarget ? snapshot.EnPassantTarget : (Vector2Int?)null;
-            Turn = snapshot.Turn;
-            Winner = snapshot.HasWinner ? snapshot.Winner : (PieceColor?)null;
-            IsDraw = snapshot.IsDraw;
-            StatusText = snapshot.StatusText;
+            RebuildStateFromHistory(snapshot);
+        }
 
-            history.Clear();
-            history.AddRange(snapshot.History);
-            activeMoveCount = Mathf.Clamp(snapshot.ActiveMoveCount, 0, history.Count);
-            capturedByWhite.Clear();
-            capturedByWhite.AddRange(snapshot.CapturedByWhite);
-            capturedByBlack.Clear();
-            capturedByBlack.AddRange(snapshot.CapturedByBlack);
-            undoFrames.Clear();
-            for (int i = 0; i < history.Count; i++)
+        private void RebuildStateFromHistory(GameSnapshot snapshot)
+        {
+            ResetGame();
+
+            List<MoveRecord> savedHistory = new(snapshot.History);
+            int savedActiveMoveCount = Mathf.Clamp(snapshot.ActiveMoveCount, 0, savedHistory.Count);
+
+            for (int i = 0; i < savedActiveMoveCount; i++)
             {
-                undoFrames.Add(default);
+                MoveRecord record = savedHistory[i];
+                TryMove(
+                    new Vector2Int(record.FromFile, record.FromRank),
+                    new Vector2Int(record.ToFile, record.ToRank),
+                    record.PromotionType,
+                    out _);
+            }
+
+            if (savedHistory.Count > activeMoveCount)
+            {
+                history.AddRange(savedHistory.GetRange(activeMoveCount, savedHistory.Count - activeMoveCount));
+                while (undoFrames.Count < history.Count)
+                {
+                    undoFrames.Add(default);
+                }
             }
         }
 
@@ -802,6 +935,20 @@ namespace BattleChess
         private static PieceColor Opponent(PieceColor color)
         {
             return color == PieceColor.White ? PieceColor.Black : PieceColor.White;
+        }
+
+        private static int PieceValue(PieceType type)
+        {
+            return type switch
+            {
+                PieceType.Pawn => 1,
+                PieceType.Knight => 3,
+                PieceType.Bishop => 3,
+                PieceType.Rook => 5,
+                PieceType.Queen => 9,
+                PieceType.King => 100,
+                _ => 0
+            };
         }
 
         // ------------------------------------------------------------------

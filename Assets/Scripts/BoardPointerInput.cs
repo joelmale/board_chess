@@ -64,11 +64,12 @@ namespace BattleChess
                 TryInitializeBoardSdk();
             }
 
-            if (boardSdkAvailable && TryPollBoardContacts())
+            if (boardSdkAvailable && TryPollBoardContacts() && contacts.Count > 0)
             {
                 return contacts;
             }
 
+            contacts.Clear();
             PollInputSystemInput();
             return contacts;
         }

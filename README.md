@@ -6,7 +6,7 @@ The game supports two-player chess with legal move validation, turn enforcement,
 
 ## Project Status
 
-This is an early playable prototype. It currently renders the board and pieces with Unity IMGUI at runtime and bootstraps itself into any loaded scene.
+This is an early playable prototype. It currently generates a 3D chess board, simple 3D pieces, camera, lighting, and raycast input at runtime, with an IMGUI side panel for status, move history, undo, redo, promotion, and reset controls.
 
 Physical glyph piece support is not implemented yet. The current interaction model is finger, touch, or mouse input only.
 
@@ -39,10 +39,14 @@ In Unity Hub:
 
 ## Editor Controls
 
-- Drag a piece to move it.
-- Tap or click a piece, then tap or click a destination square.
+- Drag a 3D piece to move it.
+- Tap or click a 3D piece, then tap or click a destination square.
 - Use `Undo` and `Redo` to step through the move timeline.
 - Undone future moves remain visible in the move history as grey text until a new move creates a new history path.
+- Use `Save` and `Load` to persist the current game locally.
+- Use the `Top`, `3/4`, `White`, and `Black` view buttons to switch the board camera.
+- Use `Learning Mode` buttons to highlight legal moves, threatened squares, at-risk pieces, pins, and tactical warnings.
+- Captured pieces are shown in the side panel for both players.
 - Choose `Q`, `R`, `B`, or `N` when a pawn promotes.
 - Use the `Reset` button to restart the game.
 
@@ -79,19 +83,25 @@ Board builds typically require Android, API level 33 or newer, IL2CPP, ARM64, an
 
 The app polls `Board.Input.BoardInput.GetActiveContacts(BoardContactType.Finger)` by reflection when the SDK is installed. Without the SDK, the Unity Editor fallback uses normal mouse and touch input.
 
+See `FIRST_RUN_AND_BOARD_DEPLOYMENT.md` for the current first-run, Android build, install, and log capture checklist.
+
 ## Repository Layout
 
 ```text
 Assets/
   Scripts/
-    BoardChessGame.cs       Runtime game bootstrap, rendering, and interaction flow
+    BoardChessGame.cs       Runtime game bootstrap, 3D board generation, and interaction flow
     BoardPointerInput.cs    Board SDK input adapter with Unity input fallback
     ChessRules.cs           Chess board state, legal move generation, and game rules
+    GameSaveData.cs         JSON save/load DTOs
+    PieceView.cs            Marker component for generated 3D chess pieces
+    SquareView.cs           Marker component for generated 3D board tiles
 Packages/
   manifest.json             Unity package dependencies
 ProjectSettings/
   ProjectVersion.txt        Unity editor version
 README.md
+FIRST_RUN_AND_BOARD_DEPLOYMENT.md
 ```
 
 ## Version Control

@@ -213,7 +213,36 @@ namespace BattleChess.Tests
             Assert.AreEqual(PieceType.Knight, rules.GetPiece(new Vector2Int(5, 2)).Type);
             Assert.IsTrue(rules.GetPiece(new Vector2Int(2, 5)).IsEmpty);
             Assert.IsTrue(rules.GetPiece(new Vector2Int(4, 1)).IsEmpty);
-            Assert.IsFalse(rules.CanUndo);
+            Assert.IsTrue(rules.CanUndo);
+            Assert.IsTrue(rules.TryUndo());
+            Assert.AreEqual(2, rules.ActiveMoveCount);
+            Assert.IsTrue(rules.CanRedo);
+        }
+
+        [Test]
+        public void SaveData_JsonRoundTrip_RestoresUndoAndRedo()
+        {
+            Assert.IsTrue(Move(4, 1, 4, 3));   // e4
+            Assert.IsTrue(Move(4, 6, 4, 4));   // e5
+            Assert.IsTrue(Move(6, 0, 5, 2));   // Nf3
+            Assert.IsTrue(rules.TryUndo());
+
+            string json = JsonUtility.ToJson(GameSaveData.FromSnapshot(rules.GetSnapshot()));
+            GameSaveData saveData = JsonUtility.FromJson<GameSaveData>(json);
+
+            ChessRules restored = new();
+            restored.ResetGame();
+            restored.RestoreFromSnapshot(saveData.ToSnapshot());
+
+            Assert.AreEqual(3, restored.History.Count);
+            Assert.AreEqual(2, restored.ActiveMoveCount);
+            Assert.AreEqual("e5", restored.LastMove.Value.Notation);
+            Assert.IsTrue(restored.CanUndo);
+            Assert.IsTrue(restored.CanRedo);
+
+            Assert.IsTrue(restored.TryRedo());
+            Assert.AreEqual("Nf3", restored.LastMove.Value.Notation);
+            Assert.AreEqual(PieceType.Knight, restored.GetPiece(new Vector2Int(5, 2)).Type);
         }
 
         // ------------------------------------------------------------------
