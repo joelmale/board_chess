@@ -14,15 +14,15 @@ Build the full approved roadmap: harden the chess rules with tests, improve play
 
 ## Commit Plan
 
-1. `test: add chess rules test harness`
+1. ~~`test: add chess rules test harness`~~ Completed
    - Add Unity Test Framework if needed.
    - Cover opening moves, illegal moves, check, checkmate, stalemate, castling, en passant, and promotion.
 
-2. `refactor: separate chess game state from presentation`
+2. ~~`refactor: separate chess game state from presentation`~~ Completed
    - Add `MoveRecord`, `GameSnapshot`, promotion API, undo stack, captured pieces, and move notation.
    - Preserve current playable behavior.
 
-3. `feat: add gameplay UX controls`
+3. ~~`feat: add gameplay UX controls`~~ Completed
    - Add move history, last-move highlight, check/capture feedback, undo, and promotion choice UI.
    - Update README controls.
 

@@ -27,6 +27,7 @@ namespace BattleChess.Tests
         public void History_StartsEmpty()
         {
             Assert.AreEqual(0, rules.History.Count);
+            Assert.AreEqual(0, rules.ActiveMoveCount);
             Assert.IsFalse(rules.LastMove.HasValue);
         }
 
@@ -38,6 +39,7 @@ namespace BattleChess.Tests
             Assert.IsTrue(Move(6, 0, 5, 2));   // Nf3
 
             Assert.AreEqual(3, rules.History.Count);
+            Assert.AreEqual(3, rules.ActiveMoveCount);
             Assert.IsTrue(rules.LastMove.HasValue);
             Assert.AreEqual(PieceType.Knight, rules.LastMove.Value.MovedType);
             Assert.AreEqual(PieceColor.White, rules.LastMove.Value.MovedColor);
@@ -96,8 +98,11 @@ namespace BattleChess.Tests
             Assert.AreEqual(PieceType.Pawn, rules.GetPiece(new Vector2Int(4, 1)).Type);
             Assert.IsTrue(rules.GetPiece(new Vector2Int(4, 3)).IsEmpty);
             Assert.AreEqual(PieceColor.White, rules.Turn);
-            Assert.AreEqual(0, rules.History.Count);
+            Assert.AreEqual(1, rules.History.Count);
+            Assert.AreEqual(0, rules.ActiveMoveCount);
+            Assert.IsFalse(rules.LastMove.HasValue);
             Assert.IsFalse(rules.CanUndo);
+            Assert.IsTrue(rules.CanRedo);
         }
 
         [Test]
@@ -136,6 +141,54 @@ namespace BattleChess.Tests
             Assert.AreEqual(PieceType.Queen, rules.GetPiece(new Vector2Int(3, 7)).Type);
         }
 
+        [Test]
+        public void Redo_AfterUndo_ReappliesMove()
+        {
+            Assert.IsTrue(Move(4, 1, 4, 3));   // e4
+            Assert.IsTrue(rules.TryUndo());
+
+            Assert.IsTrue(rules.CanRedo);
+            Assert.IsTrue(rules.TryRedo());
+
+            Assert.AreEqual(PieceType.Pawn, rules.GetPiece(new Vector2Int(4, 3)).Type);
+            Assert.IsTrue(rules.GetPiece(new Vector2Int(4, 1)).IsEmpty);
+            Assert.AreEqual(PieceColor.Black, rules.Turn);
+            Assert.AreEqual(1, rules.ActiveMoveCount);
+            Assert.AreEqual(1, rules.History.Count);
+            Assert.IsFalse(rules.CanRedo);
+        }
+
+        [Test]
+        public void Undo_KeepsFutureMovesUntilNewMove()
+        {
+            Assert.IsTrue(Move(4, 1, 4, 3));   // e4
+            Assert.IsTrue(Move(4, 6, 4, 4));   // e5
+            Assert.IsTrue(Move(6, 0, 5, 2));   // Nf3
+
+            Assert.IsTrue(rules.TryUndo());
+            Assert.AreEqual(3, rules.History.Count);
+            Assert.AreEqual(2, rules.ActiveMoveCount);
+            Assert.IsTrue(rules.CanRedo);
+            Assert.AreEqual("Nf3", rules.History[2].Notation);
+            Assert.AreEqual("e5", rules.LastMove.Value.Notation);
+        }
+
+        [Test]
+        public void NewMoveAfterUndo_ReplacesFuturePath()
+        {
+            Assert.IsTrue(Move(4, 1, 4, 3));   // e4
+            Assert.IsTrue(Move(4, 6, 4, 4));   // e5
+            Assert.IsTrue(Move(6, 0, 5, 2));   // Nf3
+            Assert.IsTrue(rules.TryUndo());
+
+            Assert.IsTrue(Move(1, 0, 2, 2));   // Nc3 instead of Nf3
+
+            Assert.AreEqual(3, rules.History.Count);
+            Assert.AreEqual(3, rules.ActiveMoveCount);
+            Assert.IsFalse(rules.CanRedo);
+            Assert.AreEqual("Nc3", rules.LastMove.Value.Notation);
+        }
+
         // ------------------------------------------------------------------
         // Snapshot round-trip
         // ------------------------------------------------------------------
@@ -155,6 +208,7 @@ namespace BattleChess.Tests
             rules.RestoreFromSnapshot(snapshot);
 
             Assert.AreEqual(3, rules.History.Count);
+            Assert.AreEqual(3, rules.ActiveMoveCount);
             Assert.AreEqual(PieceColor.Black, rules.Turn);
             Assert.AreEqual(PieceType.Knight, rules.GetPiece(new Vector2Int(5, 2)).Type);
             Assert.IsTrue(rules.GetPiece(new Vector2Int(2, 5)).IsEmpty);

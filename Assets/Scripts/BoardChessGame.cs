@@ -12,6 +12,8 @@ namespace BattleChess
         private List<ChessMove> selectedMoves = new();
         private int? activePointerId;
         private Vector2 dragPosition;
+        private Vector2Int? pendingPromotionFrom;
+        private Vector2Int? pendingPromotionTo;
         private string transientMessage = string.Empty;
         private float transientMessageUntil;
 
@@ -21,6 +23,10 @@ namespace BattleChess
         private GUIStyle pieceStyle;
         private GUIStyle coordinateStyle;
         private GUIStyle buttonStyle;
+        private GUIStyle disabledButtonStyle;
+        private GUIStyle sectionStyle;
+        private GUIStyle moveHistoryStyle;
+        private GUIStyle futureMoveHistoryStyle;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Bootstrap()
@@ -50,9 +56,13 @@ namespace BattleChess
 
             foreach (PointerContact contact in contacts)
             {
-                if (contact.Phase == PointerPhase.Began && layout.ResetRect.Contains(contact.GuiPosition))
+                if (contact.Phase == PointerPhase.Began && HandleCommandContact(contact.GuiPosition, layout))
                 {
-                    ResetGame();
+                    continue;
+                }
+
+                if (pendingPromotionFrom.HasValue)
+                {
                     continue;
                 }
 
@@ -77,6 +87,43 @@ namespace BattleChess
             {
                 EndContact(new PointerContact(activePointerId.Value, dragPosition, PointerPhase.Ended));
             }
+        }
+
+        private bool HandleCommandContact(Vector2 guiPosition, BoardLayout layout)
+        {
+            if (layout.ResetRect.Contains(guiPosition))
+            {
+                ResetGame();
+                return true;
+            }
+
+            if (pendingPromotionFrom.HasValue)
+            {
+                for (int i = 0; i < layout.PromotionChoiceRects.Length; i++)
+                {
+                    if (layout.PromotionChoiceRects[i].Contains(guiPosition))
+                    {
+                        CompletePromotion(PromotionChoices[i]);
+                        return true;
+                    }
+                }
+
+                return true;
+            }
+
+            if (layout.UndoRect.Contains(guiPosition))
+            {
+                UndoMove();
+                return true;
+            }
+
+            if (layout.RedoRect.Contains(guiPosition))
+            {
+                RedoMove();
+                return true;
+            }
+
+            return false;
         }
 
         private void BeginContact(PointerContact contact)
@@ -118,6 +165,18 @@ namespace BattleChess
                 return;
             }
 
+            int moveIndex = selectedMoves.FindIndex(candidate => candidate.To == destination);
+            if (moveIndex >= 0 && selectedMoves[moveIndex].IsPromotion)
+            {
+                pendingPromotionFrom = from;
+                pendingPromotionTo = destination;
+                selectedSquare = null;
+                selectedMoves.Clear();
+                transientMessage = "Choose promotion";
+                transientMessageUntil = Time.unscaledTime + 10f;
+                return;
+            }
+
             if (rules.TryMove(from, destination, out string message))
             {
                 selectedSquare = null;
@@ -137,7 +196,66 @@ namespace BattleChess
             selectedSquare = null;
             selectedMoves.Clear();
             activePointerId = null;
+            pendingPromotionFrom = null;
+            pendingPromotionTo = null;
             transientMessage = string.Empty;
+        }
+
+        private void UndoMove()
+        {
+            if (!rules.TryUndo())
+            {
+                return;
+            }
+
+            ClearInteractionState();
+            transientMessage = "Move undone";
+            transientMessageUntil = Time.unscaledTime + 1.2f;
+        }
+
+        private void RedoMove()
+        {
+            if (!rules.TryRedo())
+            {
+                return;
+            }
+
+            ClearInteractionState();
+            transientMessage = "Move redone";
+            transientMessageUntil = Time.unscaledTime + 1.2f;
+        }
+
+        private void CompletePromotion(PieceType promotionType)
+        {
+            if (!pendingPromotionFrom.HasValue || !pendingPromotionTo.HasValue)
+            {
+                return;
+            }
+
+            Vector2Int from = pendingPromotionFrom.Value;
+            Vector2Int to = pendingPromotionTo.Value;
+            pendingPromotionFrom = null;
+            pendingPromotionTo = null;
+
+            if (rules.TryMove(from, to, promotionType, out string message))
+            {
+                ClearInteractionState();
+                transientMessage = string.Empty;
+                return;
+            }
+
+            ClearInteractionState();
+            transientMessage = message;
+            transientMessageUntil = Time.unscaledTime + 1.4f;
+        }
+
+        private void ClearInteractionState()
+        {
+            selectedSquare = null;
+            selectedMoves.Clear();
+            activePointerId = null;
+            pendingPromotionFrom = null;
+            pendingPromotionTo = null;
         }
 
         private void OnGUI()
@@ -166,13 +284,23 @@ namespace BattleChess
             string status = Time.unscaledTime < transientMessageUntil && !string.IsNullOrEmpty(transientMessage)
                 ? transientMessage
                 : rules.StatusText;
-            GUI.Label(new Rect(panel.x + 24f, panel.y + 92f, panel.width - 48f, 88f), status, statusStyle);
+            GUI.Label(new Rect(panel.x + 24f, panel.y + 82f, panel.width - 48f, 58f), status, statusStyle);
 
-            string checkText = rules.IsInCheck(rules.Turn) && !rules.Winner.HasValue ? "King is under attack" : "Drag a piece or tap source then destination";
-            GUI.Label(new Rect(panel.x + 24f, panel.y + 188f, panel.width - 48f, 92f), checkText, hintStyle);
+            string feedbackText = BuildFeedbackText();
+            GUI.Label(new Rect(panel.x + 24f, panel.y + 142f, panel.width - 48f, 42f), feedbackText, hintStyle);
 
-            DrawRect(layout.ResetRect, new Color(0.78f, 0.34f, 0.20f));
-            GUI.Label(layout.ResetRect, "Reset", buttonStyle);
+            bool controlsEnabled = !pendingPromotionFrom.HasValue;
+            DrawButton(layout.UndoRect, "Undo", controlsEnabled && rules.CanUndo, new Color(0.34f, 0.50f, 0.36f));
+            DrawButton(layout.RedoRect, "Redo", controlsEnabled && rules.CanRedo, new Color(0.34f, 0.50f, 0.36f));
+
+            if (pendingPromotionFrom.HasValue)
+            {
+                DrawPromotionPrompt(layout);
+            }
+
+            DrawMoveHistory(layout);
+
+            DrawButton(layout.ResetRect, "Reset", true, new Color(0.78f, 0.34f, 0.20f));
         }
 
         private void DrawBoard(BoardLayout layout)
@@ -187,6 +315,11 @@ namespace BattleChess
                     Rect squareRect = GetSquareRect(layout, square);
                     bool light = (file + rank) % 2 == 0;
                     DrawRect(squareRect, light ? new Color(0.78f, 0.70f, 0.52f) : new Color(0.27f, 0.42f, 0.25f));
+
+                    if (IsLastMoveSquare(square))
+                    {
+                        DrawRect(Shrink(squareRect, layout.SquareSize * 0.08f), new Color(0.20f, 0.53f, 0.85f, 0.40f));
+                    }
 
                     if (selectedSquare.HasValue && selectedSquare.Value == square)
                     {
@@ -210,6 +343,57 @@ namespace BattleChess
                     DrawPieceLabel(new Rect(dragPosition.x - layout.SquareSize * 0.5f, dragPosition.y - layout.SquareSize * 0.5f, layout.SquareSize, layout.SquareSize), selected);
                 }
             }
+        }
+
+        private void DrawPromotionPrompt(BoardLayout layout)
+        {
+            DrawRect(layout.PromotionRect, new Color(0.07f, 0.10f, 0.08f, 0.92f));
+            GUI.Label(new Rect(layout.PromotionRect.x + 10f, layout.PromotionRect.y + 5f, layout.PromotionRect.width - 20f, 20f), "Promote pawn", sectionStyle);
+
+            for (int i = 0; i < layout.PromotionChoiceRects.Length; i++)
+            {
+                DrawButton(layout.PromotionChoiceRects[i], PieceLabel(new ChessPiece(PromotionChoices[i], rules.Turn)), true, new Color(0.72f, 0.61f, 0.34f));
+            }
+        }
+
+        private void DrawMoveHistory(BoardLayout layout)
+        {
+            DrawRect(layout.HistoryRect, new Color(0.03f, 0.05f, 0.04f, 0.36f));
+            GUI.Label(new Rect(layout.HistoryRect.x + 10f, layout.HistoryRect.y + 7f, layout.HistoryRect.width - 20f, 24f), "Move History", sectionStyle);
+
+            IReadOnlyList<MoveRecord> history = rules.History;
+            if (history.Count == 0)
+            {
+                GUI.Label(new Rect(layout.HistoryRect.x + 10f, layout.HistoryRect.y + 36f, layout.HistoryRect.width - 20f, 28f), "No moves yet", hintStyle);
+                return;
+            }
+
+            const float rowHeight = 22f;
+            int maxRows = Mathf.Max(1, Mathf.FloorToInt((layout.HistoryRect.height - 40f) / rowHeight));
+            int start = Mathf.Max(0, history.Count - maxRows);
+            float y = layout.HistoryRect.y + 34f;
+
+            for (int i = start; i < history.Count; i++)
+            {
+                MoveRecord move = history[i];
+                bool active = i < rules.ActiveMoveCount;
+                bool current = active && i == rules.ActiveMoveCount - 1;
+                Rect rowRect = new(layout.HistoryRect.x + 8f, y, layout.HistoryRect.width - 16f, rowHeight);
+
+                if (current)
+                {
+                    DrawRect(rowRect, new Color(0.20f, 0.53f, 0.85f, 0.22f));
+                }
+
+                GUI.Label(rowRect, FormatMoveHistoryLine(i, move), active ? moveHistoryStyle : futureMoveHistoryStyle);
+                y += rowHeight;
+            }
+        }
+
+        private void DrawButton(Rect rect, string label, bool enabled, Color color)
+        {
+            DrawRect(rect, enabled ? color : new Color(0.28f, 0.30f, 0.28f, 0.70f));
+            GUI.Label(rect, label, enabled ? buttonStyle : disabledButtonStyle);
         }
 
         private void DrawPieceAtSquare(BoardLayout layout, Vector2Int square)
@@ -270,6 +454,56 @@ namespace BattleChess
             return false;
         }
 
+        private bool IsLastMoveSquare(Vector2Int square)
+        {
+            MoveRecord? lastMove = rules.LastMove;
+            if (!lastMove.HasValue)
+            {
+                return false;
+            }
+
+            MoveRecord move = lastMove.Value;
+            return square == new Vector2Int(move.FromFile, move.FromRank)
+                   || square == new Vector2Int(move.ToFile, move.ToRank);
+        }
+
+        private string BuildFeedbackText()
+        {
+            if (pendingPromotionFrom.HasValue)
+            {
+                return "Choose the piece for promotion";
+            }
+
+            if (rules.IsInCheck(rules.Turn) && !rules.Winner.HasValue)
+            {
+                return "King is under attack";
+            }
+
+            MoveRecord? lastMove = rules.LastMove;
+            if (lastMove.HasValue)
+            {
+                MoveRecord move = lastMove.Value;
+                if (move.IsCheckmate)
+                {
+                    return $"Last: {move.Notation} - checkmate";
+                }
+
+                if (move.GivesCheck)
+                {
+                    return $"Last: {move.Notation} - check";
+                }
+
+                if (move.IsCapture)
+                {
+                    return $"Last: {move.Notation} - capture";
+                }
+
+                return $"Last: {move.Notation}";
+            }
+
+            return "Drag a piece or tap source then destination";
+        }
+
         private bool TryGetSquare(Vector2 guiPosition, out Vector2Int square)
         {
             BoardLayout layout = CalculateLayout();
@@ -310,9 +544,22 @@ namespace BattleChess
             float panelY = boardY;
             float panelWidth = Mathf.Max(280f, boardX - margin * 1.8f);
             Rect panelRect = new(panelX, panelY, panelWidth, boardSize);
-            Rect resetRect = new(panelX + 24f, panelRect.yMax - 96f, Mathf.Min(220f, panelWidth - 48f), 62f);
+            float buttonWidth = Mathf.Min(220f, panelWidth - 48f);
+            Rect undoRect = new(panelX + 24f, panelY + 190f, buttonWidth * 0.5f - 6f, 42f);
+            Rect redoRect = new(undoRect.xMax + 12f, undoRect.y, undoRect.width, undoRect.height);
+            Rect promotionRect = new(panelX + 24f, panelY + 244f, panelWidth - 48f, 58f);
+            Rect[] promotionChoiceRects = new Rect[PromotionChoices.Length];
+            float choiceGap = 6f;
+            float choiceWidth = (promotionRect.width - choiceGap * 3f - 20f) / 4f;
+            for (int i = 0; i < promotionChoiceRects.Length; i++)
+            {
+                promotionChoiceRects[i] = new Rect(promotionRect.x + 10f + i * (choiceWidth + choiceGap), promotionRect.y + 28f, choiceWidth, 24f);
+            }
 
-            return new BoardLayout(boardRect, panelRect, resetRect, boardSize / 8f);
+            Rect resetRect = new(panelX + 24f, panelRect.yMax - 74f, buttonWidth, 50f);
+            Rect historyRect = new(panelX + 24f, panelY + 318f, panelWidth - 48f, Mathf.Max(80f, resetRect.y - (panelY + 318f) - 16f));
+
+            return new BoardLayout(boardRect, panelRect, resetRect, undoRect, redoRect, historyRect, promotionRect, promotionChoiceRects, boardSize / 8f);
         }
 
         private static Rect Shrink(Rect rect, float amount)
@@ -342,6 +589,13 @@ namespace BattleChess
             };
 
             return piece.Color == PieceColor.White ? label : label.ToLowerInvariant();
+        }
+
+        private static string FormatMoveHistoryLine(int index, MoveRecord move)
+        {
+            int moveNumber = index / 2 + 1;
+            string prefix = index % 2 == 0 ? $"{moveNumber}." : $"{moveNumber}...";
+            return $"{prefix} {move.Notation}";
         }
 
         private void EnsureStyles()
@@ -396,6 +650,31 @@ namespace BattleChess
                 fontStyle = FontStyle.Bold,
                 normal = { textColor = Color.white }
             };
+
+            disabledButtonStyle = new GUIStyle(buttonStyle)
+            {
+                normal = { textColor = new Color(0.72f, 0.76f, 0.70f) }
+            };
+
+            sectionStyle = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleLeft,
+                fontSize = Mathf.RoundToInt(Screen.height * 0.018f),
+                fontStyle = FontStyle.Bold,
+                normal = { textColor = new Color(0.92f, 0.88f, 0.70f) }
+            };
+
+            moveHistoryStyle = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleLeft,
+                fontSize = Mathf.RoundToInt(Screen.height * 0.018f),
+                normal = { textColor = new Color(0.96f, 0.96f, 0.88f) }
+            };
+
+            futureMoveHistoryStyle = new GUIStyle(moveHistoryStyle)
+            {
+                normal = { textColor = new Color(0.58f, 0.62f, 0.56f) }
+            };
         }
 
         private readonly struct BoardLayout
@@ -403,15 +682,42 @@ namespace BattleChess
             public readonly Rect BoardRect;
             public readonly Rect PanelRect;
             public readonly Rect ResetRect;
+            public readonly Rect UndoRect;
+            public readonly Rect RedoRect;
+            public readonly Rect HistoryRect;
+            public readonly Rect PromotionRect;
+            public readonly Rect[] PromotionChoiceRects;
             public readonly float SquareSize;
 
-            public BoardLayout(Rect boardRect, Rect panelRect, Rect resetRect, float squareSize)
+            public BoardLayout(
+                Rect boardRect,
+                Rect panelRect,
+                Rect resetRect,
+                Rect undoRect,
+                Rect redoRect,
+                Rect historyRect,
+                Rect promotionRect,
+                Rect[] promotionChoiceRects,
+                float squareSize)
             {
                 BoardRect = boardRect;
                 PanelRect = panelRect;
                 ResetRect = resetRect;
+                UndoRect = undoRect;
+                RedoRect = redoRect;
+                HistoryRect = historyRect;
+                PromotionRect = promotionRect;
+                PromotionChoiceRects = promotionChoiceRects;
                 SquareSize = squareSize;
             }
         }
+
+        private static readonly PieceType[] PromotionChoices =
+        {
+            PieceType.Queen,
+            PieceType.Rook,
+            PieceType.Bishop,
+            PieceType.Knight
+        };
     }
 }

@@ -41,9 +41,29 @@ In Unity Hub:
 
 - Drag a piece to move it.
 - Tap or click a piece, then tap or click a destination square.
+- Use `Undo` and `Redo` to step through the move timeline.
+- Undone future moves remain visible in the move history as grey text until a new move creates a new history path.
+- Choose `Q`, `R`, `B`, or `N` when a pawn promotes.
 - Use the `Reset` button to restart the game.
 
 Only legal moves are accepted. Illegal moves display a short status message.
+
+## Tests
+
+Run EditMode tests from the project root with:
+
+```bash
+/Applications/Unity/Hub/Editor/6000.4.5f1/Unity.app/Contents/MacOS/Unity \
+  -batchmode \
+  -nographics \
+  -projectPath /Users/JoelN/Coding/BoardGames/battlechess/Chess \
+  -runTests \
+  -testPlatform EditMode \
+  -testResults /tmp/battlechess-editmode-results.xml \
+  -logFile /tmp/battlechess-editmode.log
+```
+
+Do not add `-quit` to this command. Unity's Test Framework exits the editor after the test run completes.
 
 ## Board Hardware Setup
 

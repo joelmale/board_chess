@@ -63,7 +63,8 @@ namespace BattleChess
         private readonly List<MoveRecord> history = new();
         private readonly List<ChessPiece> capturedByWhite = new();
         private readonly List<ChessPiece> capturedByBlack = new();
-        private readonly Stack<UndoFrame> undoStack = new();
+        private readonly List<UndoFrame> undoFrames = new();
+        private int activeMoveCount;
 
         public PieceColor Turn { get; private set; } = PieceColor.White;
         public PieceColor? Winner { get; private set; }
@@ -73,10 +74,14 @@ namespace BattleChess
         public IReadOnlyList<MoveRecord> History => history;
         public IReadOnlyList<ChessPiece> CapturedByWhite => capturedByWhite;
         public IReadOnlyList<ChessPiece> CapturedByBlack => capturedByBlack;
-        public bool CanUndo => undoStack.Count > 0;
+        public int ActiveMoveCount => activeMoveCount;
+        public bool CanUndo => activeMoveCount > 0
+                               && activeMoveCount <= undoFrames.Count
+                               && undoFrames[activeMoveCount - 1].IsValid;
+        public bool CanRedo => activeMoveCount < history.Count;
 
         public MoveRecord? LastMove
-            => history.Count > 0 ? history[history.Count - 1] : (MoveRecord?)null;
+            => activeMoveCount > 0 ? history[activeMoveCount - 1] : (MoveRecord?)null;
 
         public ChessPiece GetPiece(Vector2Int square)
         {
@@ -111,7 +116,8 @@ namespace BattleChess
             history.Clear();
             capturedByWhite.Clear();
             capturedByBlack.Clear();
-            undoStack.Clear();
+            undoFrames.Clear();
+            activeMoveCount = 0;
         }
 
         /// <summary>
@@ -149,6 +155,8 @@ namespace BattleChess
 
             ChessMove move = legalMoves[moveIndex];
             PieceType resolvedPromotion = ResolvePromotionType(move, promotionType);
+
+            TrimFutureHistory();
 
             // Capture data is gathered BEFORE applying the move so that en passant
             // can pick the captured pawn off its actual square (not the destination).
@@ -189,6 +197,7 @@ namespace BattleChess
                 move.IsPromotion, resolvedPromotion,
                 givesCheck, isCheckmate,
                 notation));
+            activeMoveCount = history.Count;
 
             return true;
         }
@@ -215,34 +224,58 @@ namespace BattleChess
         /// </summary>
         public bool TryUndo()
         {
-            if (undoStack.Count == 0)
+            if (!CanUndo)
             {
                 return false;
             }
 
-            UndoFrame frame = undoStack.Pop();
-            for (int file = 0; file < 8; file++)
+            RestoreUndoFrame(undoFrames[activeMoveCount - 1]);
+            activeMoveCount--;
+
+            return true;
+        }
+
+        /// <summary>
+        /// Reapplies the next move after an undo. Returns false when the
+        /// current position is already at the end of the move timeline.
+        /// </summary>
+        public bool TryRedo()
+        {
+            if (!CanRedo)
             {
-                for (int rank = 0; rank < 8; rank++)
+                return false;
+            }
+
+            MoveRecord record = history[activeMoveCount];
+            ChessMove move = new(
+                new Vector2Int(record.FromFile, record.FromRank),
+                new Vector2Int(record.ToFile, record.ToRank),
+                record.IsCastling,
+                record.IsEnPassant,
+                record.IsPromotion);
+
+            undoFrames[activeMoveCount] = new UndoFrame(
+                board, enPassantTarget, Turn, Winner, IsDraw, StatusText,
+                capturedByWhite.Count, capturedByBlack.Count);
+
+            ApplyMove(board, move, true, record.PromotionType);
+            Turn = Opponent(Turn);
+            UpdateGameStatus();
+
+            if (record.CapturedType != PieceType.None)
+            {
+                ChessPiece captured = new(record.CapturedType, record.CapturedColor);
+                if (record.MovedColor == PieceColor.White)
                 {
-                    board[file, rank] = frame.Board[file, rank];
+                    capturedByWhite.Add(captured);
+                }
+                else
+                {
+                    capturedByBlack.Add(captured);
                 }
             }
 
-            enPassantTarget = frame.EnPassantTarget;
-            Turn = frame.Turn;
-            Winner = frame.Winner;
-            IsDraw = frame.IsDraw;
-            StatusText = frame.StatusText;
-
-            TrimList(capturedByWhite, frame.CapturedByWhiteCount);
-            TrimList(capturedByBlack, frame.CapturedByBlackCount);
-
-            if (history.Count > 0)
-            {
-                history.RemoveAt(history.Count - 1);
-            }
-
+            activeMoveCount++;
             return true;
         }
 
@@ -251,7 +284,7 @@ namespace BattleChess
         {
             return new GameSnapshot(
                 board, enPassantTarget, Turn, Winner, IsDraw, StatusText,
-                history, capturedByWhite, capturedByBlack);
+                history, activeMoveCount, capturedByWhite, capturedByBlack);
         }
 
         /// <summary>Restores a previously captured snapshot. Clears the undo stack.</summary>
@@ -271,11 +304,16 @@ namespace BattleChess
 
             history.Clear();
             history.AddRange(snapshot.History);
+            activeMoveCount = Mathf.Clamp(snapshot.ActiveMoveCount, 0, history.Count);
             capturedByWhite.Clear();
             capturedByWhite.AddRange(snapshot.CapturedByWhite);
             capturedByBlack.Clear();
             capturedByBlack.AddRange(snapshot.CapturedByBlack);
-            undoStack.Clear();
+            undoFrames.Clear();
+            for (int i = 0; i < history.Count; i++)
+            {
+                undoFrames.Add(default);
+            }
         }
 
         private static PieceType ResolvePromotionType(ChessMove move, PieceType requested)
@@ -310,9 +348,41 @@ namespace BattleChess
 
         private void PushUndoFrame()
         {
-            undoStack.Push(new UndoFrame(
+            undoFrames.Add(new UndoFrame(
                 board, enPassantTarget, Turn, Winner, IsDraw, StatusText,
                 capturedByWhite.Count, capturedByBlack.Count));
+        }
+
+        private void RestoreUndoFrame(UndoFrame frame)
+        {
+            for (int file = 0; file < 8; file++)
+            {
+                for (int rank = 0; rank < 8; rank++)
+                {
+                    board[file, rank] = frame.Board[file, rank];
+                }
+            }
+
+            enPassantTarget = frame.EnPassantTarget;
+            Turn = frame.Turn;
+            Winner = frame.Winner;
+            IsDraw = frame.IsDraw;
+            StatusText = frame.StatusText;
+
+            TrimList(capturedByWhite, frame.CapturedByWhiteCount);
+            TrimList(capturedByBlack, frame.CapturedByBlackCount);
+        }
+
+        private void TrimFutureHistory()
+        {
+            if (activeMoveCount >= history.Count)
+            {
+                return;
+            }
+
+            int removeCount = history.Count - activeMoveCount;
+            history.RemoveRange(activeMoveCount, removeCount);
+            undoFrames.RemoveRange(activeMoveCount, removeCount);
         }
 
         private static void TrimList<T>(List<T> list, int targetCount)
@@ -815,6 +885,7 @@ namespace BattleChess
 
         private readonly struct UndoFrame
         {
+            public readonly bool IsValid;
             public readonly ChessPiece[,] Board;
             public readonly Vector2Int? EnPassantTarget;
             public readonly PieceColor Turn;
@@ -834,6 +905,7 @@ namespace BattleChess
                 int capturedByWhiteCount,
                 int capturedByBlackCount)
             {
+                IsValid = true;
                 Board = (ChessPiece[,])sourceBoard.Clone();
                 EnPassantTarget = enPassantTarget;
                 Turn = turn;

@@ -23,6 +23,7 @@ namespace BattleChess
         public PieceColor Winner { get; }
         public bool IsDraw { get; }
         public string StatusText { get; }
+        public int ActiveMoveCount { get; }
 
         public IReadOnlyList<MoveRecord> History => history;
         public IReadOnlyList<ChessPiece> CapturedByWhite => capturedByWhite;
@@ -36,6 +37,7 @@ namespace BattleChess
             bool isDraw,
             string statusText,
             IReadOnlyList<MoveRecord> sourceHistory,
+            int activeMoveCount,
             IReadOnlyList<ChessPiece> sourceCapturedByWhite,
             IReadOnlyList<ChessPiece> sourceCapturedByBlack)
         {
@@ -55,6 +57,7 @@ namespace BattleChess
             Winner = winner.GetValueOrDefault();
             IsDraw = isDraw;
             StatusText = statusText;
+            ActiveMoveCount = activeMoveCount;
 
             history = new List<MoveRecord>(sourceHistory);
             capturedByWhite = new List<ChessPiece>(sourceCapturedByWhite);
