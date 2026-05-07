@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Text;
 using UnityEngine;
 
 namespace BattleChess
@@ -59,10 +60,23 @@ namespace BattleChess
         private readonly ChessPiece[,] board = new ChessPiece[8, 8];
         private Vector2Int? enPassantTarget;
 
+        private readonly List<MoveRecord> history = new();
+        private readonly List<ChessPiece> capturedByWhite = new();
+        private readonly List<ChessPiece> capturedByBlack = new();
+        private readonly Stack<UndoFrame> undoStack = new();
+
         public PieceColor Turn { get; private set; } = PieceColor.White;
         public PieceColor? Winner { get; private set; }
         public bool IsDraw { get; private set; }
         public string StatusText { get; private set; } = "White to move";
+
+        public IReadOnlyList<MoveRecord> History => history;
+        public IReadOnlyList<ChessPiece> CapturedByWhite => capturedByWhite;
+        public IReadOnlyList<ChessPiece> CapturedByBlack => capturedByBlack;
+        public bool CanUndo => undoStack.Count > 0;
+
+        public MoveRecord? LastMove
+            => history.Count > 0 ? history[history.Count - 1] : (MoveRecord?)null;
 
         public ChessPiece GetPiece(Vector2Int square)
         {
@@ -93,9 +107,29 @@ namespace BattleChess
             IsDraw = false;
             enPassantTarget = null;
             StatusText = "White to move";
+
+            history.Clear();
+            capturedByWhite.Clear();
+            capturedByBlack.Clear();
+            undoStack.Clear();
         }
 
+        /// <summary>
+        /// Attempts a move. Pawns reaching the last rank are promoted to queen.
+        /// Use the overload that takes a <see cref="PieceType"/> to choose another
+        /// promotion piece.
+        /// </summary>
         public bool TryMove(Vector2Int from, Vector2Int to, out string message)
+        {
+            return TryMove(from, to, PieceType.Queen, out message);
+        }
+
+        /// <summary>
+        /// Attempts a move with an explicit promotion piece. Promotion piece is
+        /// only consulted when the move is a pawn promotion; otherwise it is
+        /// ignored. Legal values: Queen, Rook, Bishop, Knight.
+        /// </summary>
+        public bool TryMove(Vector2Int from, Vector2Int to, PieceType promotionType, out string message)
         {
             message = string.Empty;
 
@@ -113,9 +147,49 @@ namespace BattleChess
                 return false;
             }
 
-            ApplyMove(board, legalMoves[moveIndex], true);
+            ChessMove move = legalMoves[moveIndex];
+            PieceType resolvedPromotion = ResolvePromotionType(move, promotionType);
+
+            // Capture data is gathered BEFORE applying the move so that en passant
+            // can pick the captured pawn off its actual square (not the destination).
+            ChessPiece movingPiece = board[from.x, from.y];
+            ChessPiece capturedPiece = ResolveCapturedPiece(move);
+
+            PushUndoFrame();
+            ApplyMove(board, move, true, resolvedPromotion);
+
+            PieceColor mover = Turn;
             Turn = Opponent(Turn);
             UpdateGameStatus();
+
+            if (capturedPiece.Type != PieceType.None)
+            {
+                if (mover == PieceColor.White)
+                {
+                    capturedByWhite.Add(capturedPiece);
+                }
+                else
+                {
+                    capturedByBlack.Add(capturedPiece);
+                }
+            }
+
+            bool givesCheck = IsKingInCheck(board, Turn);
+            bool isCheckmate = Winner.HasValue && Winner.Value == mover;
+
+            string notation = BuildNotation(
+                from, to, movingPiece, capturedPiece, move,
+                resolvedPromotion, givesCheck, isCheckmate);
+
+            history.Add(new MoveRecord(
+                from.x, from.y, to.x, to.y,
+                movingPiece.Type, movingPiece.Color,
+                capturedPiece.Type, capturedPiece.Color,
+                move.IsCastling, move.IsEnPassant,
+                move.IsPromotion, resolvedPromotion,
+                givesCheck, isCheckmate,
+                notation));
+
             return true;
         }
 
@@ -133,6 +207,127 @@ namespace BattleChess
         public bool IsInCheck(PieceColor color)
         {
             return IsKingInCheck(board, color);
+        }
+
+        /// <summary>
+        /// Reverses the most recently applied move. Returns false if there is
+        /// no move to undo.
+        /// </summary>
+        public bool TryUndo()
+        {
+            if (undoStack.Count == 0)
+            {
+                return false;
+            }
+
+            UndoFrame frame = undoStack.Pop();
+            for (int file = 0; file < 8; file++)
+            {
+                for (int rank = 0; rank < 8; rank++)
+                {
+                    board[file, rank] = frame.Board[file, rank];
+                }
+            }
+
+            enPassantTarget = frame.EnPassantTarget;
+            Turn = frame.Turn;
+            Winner = frame.Winner;
+            IsDraw = frame.IsDraw;
+            StatusText = frame.StatusText;
+
+            TrimList(capturedByWhite, frame.CapturedByWhiteCount);
+            TrimList(capturedByBlack, frame.CapturedByBlackCount);
+
+            if (history.Count > 0)
+            {
+                history.RemoveAt(history.Count - 1);
+            }
+
+            return true;
+        }
+
+        /// <summary>Captures the current state for save/load or external inspection.</summary>
+        public GameSnapshot GetSnapshot()
+        {
+            return new GameSnapshot(
+                board, enPassantTarget, Turn, Winner, IsDraw, StatusText,
+                history, capturedByWhite, capturedByBlack);
+        }
+
+        /// <summary>Restores a previously captured snapshot. Clears the undo stack.</summary>
+        public void RestoreFromSnapshot(GameSnapshot snapshot)
+        {
+            if (snapshot == null)
+            {
+                return;
+            }
+
+            snapshot.CopyBoardInto(board);
+            enPassantTarget = snapshot.HasEnPassantTarget ? snapshot.EnPassantTarget : (Vector2Int?)null;
+            Turn = snapshot.Turn;
+            Winner = snapshot.HasWinner ? snapshot.Winner : (PieceColor?)null;
+            IsDraw = snapshot.IsDraw;
+            StatusText = snapshot.StatusText;
+
+            history.Clear();
+            history.AddRange(snapshot.History);
+            capturedByWhite.Clear();
+            capturedByWhite.AddRange(snapshot.CapturedByWhite);
+            capturedByBlack.Clear();
+            capturedByBlack.AddRange(snapshot.CapturedByBlack);
+            undoStack.Clear();
+        }
+
+        private static PieceType ResolvePromotionType(ChessMove move, PieceType requested)
+        {
+            if (!move.IsPromotion)
+            {
+                return PieceType.None;
+            }
+
+            switch (requested)
+            {
+                case PieceType.Queen:
+                case PieceType.Rook:
+                case PieceType.Bishop:
+                case PieceType.Knight:
+                    return requested;
+                default:
+                    return PieceType.Queen;
+            }
+        }
+
+        private ChessPiece ResolveCapturedPiece(ChessMove move)
+        {
+            if (move.IsEnPassant)
+            {
+                return board[move.To.x, move.From.y];
+            }
+
+            ChessPiece destination = board[move.To.x, move.To.y];
+            return destination.IsEmpty ? default : destination;
+        }
+
+        private void PushUndoFrame()
+        {
+            undoStack.Push(new UndoFrame(
+                board, enPassantTarget, Turn, Winner, IsDraw, StatusText,
+                capturedByWhite.Count, capturedByBlack.Count));
+        }
+
+        private static void TrimList<T>(List<T> list, int targetCount)
+        {
+            if (targetCount < 0)
+            {
+                targetCount = 0;
+            }
+
+            if (targetCount >= list.Count)
+            {
+                return;
+            }
+
+            list.RemoveRange(targetCount, list.Count - targetCount);
         }
 
         private void PlaceBackRank(PieceColor color, int rank)
@@ -154,7 +349,7 @@ namespace BattleChess
             foreach (ChessMove move in GeneratePseudoMoves(from, state, true))
             {
                 ChessPiece[,] copy = (ChessPiece[,])state.Clone();
-                ApplyMove(copy, move, false);
+                ApplyMove(copy, move, false, PieceType.Queen);
                 if (!IsKingInCheck(copy, movingColor))
                 {
                     legalMoves.Add(move);
@@ -349,7 +544,7 @@ namespace BattleChess
                    && !IsSquareAttacked(state, new Vector2Int(destinationFile, rank), attacker);
         }
 
-        private void ApplyMove(ChessPiece[,] state, ChessMove move, bool updateState)
+        private void ApplyMove(ChessPiece[,] state, ChessMove move, bool updateState, PieceType promotionType)
         {
             ChessPiece movingPiece = state[move.From.x, move.From.y];
             state[move.From.x, move.From.y] = default;
@@ -374,7 +569,7 @@ namespace BattleChess
             movingPiece.HasMoved = true;
             if (move.IsPromotion)
             {
-                movingPiece.Type = PieceType.Queen;
+                movingPiece.Type = promotionType == PieceType.None ? PieceType.Queen : promotionType;
             }
 
             state[move.To.x, move.To.y] = movingPiece;
@@ -537,6 +732,117 @@ namespace BattleChess
         private static PieceColor Opponent(PieceColor color)
         {
             return color == PieceColor.White ? PieceColor.Black : PieceColor.White;
+        }
+
+        // ------------------------------------------------------------------
+        // Notation
+        // ------------------------------------------------------------------
+
+        private static string BuildNotation(
+            Vector2Int from, Vector2Int to,
+            ChessPiece movingPiece, ChessPiece capturedPiece,
+            ChessMove move, PieceType promotionType,
+            bool givesCheck, bool isCheckmate)
+        {
+            StringBuilder builder = new();
+
+            if (move.IsCastling)
+            {
+                builder.Append(to.x > from.x ? "O-O" : "O-O-O");
+            }
+            else
+            {
+                bool isPawn = movingPiece.Type == PieceType.Pawn;
+                if (isPawn)
+                {
+                    if (capturedPiece.Type != PieceType.None)
+                    {
+                        builder.Append(FileChar(from.x));
+                    }
+                }
+                else
+                {
+                    builder.Append(PieceLetter(movingPiece.Type));
+                }
+
+                if (capturedPiece.Type != PieceType.None)
+                {
+                    builder.Append('x');
+                }
+
+                builder.Append(FileChar(to.x));
+                builder.Append(RankChar(to.y));
+
+                if (move.IsPromotion)
+                {
+                    builder.Append('=');
+                    builder.Append(PieceLetter(promotionType == PieceType.None ? PieceType.Queen : promotionType));
+                }
+            }
+
+            if (isCheckmate)
+            {
+                builder.Append('#');
+            }
+            else if (givesCheck)
+            {
+                builder.Append('+');
+            }
+
+            return builder.ToString();
+        }
+
+        private static char FileChar(int file) => (char)('a' + file);
+
+        private static char RankChar(int rank) => (char)('1' + rank);
+
+        private static string PieceLetter(PieceType type)
+        {
+            return type switch
+            {
+                PieceType.King => "K",
+                PieceType.Queen => "Q",
+                PieceType.Rook => "R",
+                PieceType.Bishop => "B",
+                PieceType.Knight => "N",
+                _ => string.Empty
+            };
+        }
+
+        // ------------------------------------------------------------------
+        // Undo bookkeeping
+        // ------------------------------------------------------------------
+
+        private readonly struct UndoFrame
+        {
+            public readonly ChessPiece[,] Board;
+            public readonly Vector2Int? EnPassantTarget;
+            public readonly PieceColor Turn;
+            public readonly PieceColor? Winner;
+            public readonly bool IsDraw;
+            public readonly string StatusText;
+            public readonly int CapturedByWhiteCount;
+            public readonly int CapturedByBlackCount;
+
+            public UndoFrame(
+                ChessPiece[,] sourceBoard,
+                Vector2Int? enPassantTarget,
+                PieceColor turn,
+                PieceColor? winner,
+                bool isDraw,
+                string statusText,
+                int capturedByWhiteCount,
+                int capturedByBlackCount)
+            {
+                Board = (ChessPiece[,])sourceBoard.Clone();
+                EnPassantTarget = enPassantTarget;
+                Turn = turn;
+                Winner = winner;
+                IsDraw = isDraw;
+                StatusText = statusText;
+                CapturedByWhiteCount = capturedByWhiteCount;
+                CapturedByBlackCount = capturedByBlackCount;
+            }
         }
 
         private static readonly Vector2Int[] KnightOffsets =
